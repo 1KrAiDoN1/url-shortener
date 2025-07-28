@@ -1,38 +1,64 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"time"
 
-	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v2"
 )
 
 type Config struct {
-	Env         string `yaml:"env" env-default:"local"`
-	StoragePath string `yaml:"storage_path" env-required:"true"`
-	HTTPServer  `yaml:"http_server"`
+	DB_config_path string
+	HTTPServer     `yaml:"http_server"`
+}
+
+func SetConfig() (string, error) {
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatal("Loading Config failed, error: %w", err.Error())
+		return "", err
+	}
+	DB_config_path := fmt.Sprintf("postgres://%s:%s@%s:%s/%s", os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"), os.Getenv("DB_HOST"), os.Getenv("DB_PORT"), os.Getenv("DB_NAME"))
+	return DB_config_path, nil
 }
 
 type HTTPServer struct {
-	Address     string        `yaml:"address" env-default:"localhost:8082"`
+	Address     string        `yaml:"address" env-default:"0.0.0.0:8082"`
 	Timeout     time.Duration `yaml:"timeout" env-default:"4s"`
 	IdleTimeout time.Duration `yaml:"idle_timeout" env-default:"60s"`
 }
 
-func MustLoad() *Config {
-	configPath := os.Getenv("CONFIG_PATH")
-	if configPath == "" {
-		log.Fatal("CONFIG_PATH is not set")
+func MustLoadConfig(server_configPath string) (Config, error) {
+	db_configPath, err := SetConfig()
+	if err != nil {
+		return Config{}, err
 	}
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		log.Fatalf("config file does not exist: %s", configPath)
+	data, err := os.ReadFile(server_configPath)
+	if err != nil {
+		log.Fatal("Reading Config file failed", map[string]string{
+			"error": err.Error(),
+		})
+		return Config{}, fmt.Errorf("не удалось прочитать файл %s: %w", server_configPath, err)
 	}
 
-	var cfg Config
-	if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
-		log.Fatalf("cannot read config %s", err)
+	var port Config
+	err = yaml.Unmarshal(data, &port)
+	if err != nil {
+		log.Fatal("Parsing YAML failed", map[string]string{
+			"error": err.Error(),
+		})
+		return Config{}, fmt.Errorf("не удалось распарсить YAML: %w", err)
 	}
 
-	return &cfg
+	return Config{
+		DB_config_path: db_configPath,
+		HTTPServer: HTTPServer{
+			Address:     port.Address,
+			Timeout:     port.Timeout,
+			IdleTimeout: port.IdleTimeout,
+		},
+	}, nil
 }
